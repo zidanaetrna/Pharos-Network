@@ -31,16 +31,7 @@ A bot for automating tasks on the Pharos Network testnet.
    ```bash
    npm install
    ```
-
-3. Create a `.env` file in the root directory with the following variables:
-   ```
-   WALLET_ADDRESS=your_wallet_address
-   PRIVATE_KEY=your_private_key
-   AUTH_TOKEN=your_bearer_token
-   RPC_URL=https://testnet.dplabs-internal.com
-   FRIEND_ADDRESSES=comma_separated_friend_addresses
-   ```
-
+   
 ## Usage
 
 1. Build and run the bot:
