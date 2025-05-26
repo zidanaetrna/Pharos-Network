@@ -770,9 +770,13 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
         if (error.receipt) {
           console.log(chalk.red(`${getEmoji('x')} Receipt: ${JSON.stringify(error.receipt)}`));
         }
+        if (error.code === 'SERVER_ERROR' && error.status === 500) {
+          console.error(chalk.yellow(`${getEmoji('warning')} RPC server error (500). Skipping this swap attempt for ${walletAddress}.`));
+          break; // Skip this swap attempt and move to the next swap
+        }
         if (attempt >= maxAttempts) {
           console.error(chalk.red(`${getEmoji('x')} Swap ${i + 1} failed for ${walletAddress} after ${maxAttempts} attempts`));
-          break;
+          break; // Move to the next swap after max attempts
         }
         const delay: number = Math.min(1000 * Math.pow(2, attempt), 10000);
         console.log(chalk.yellow(`${getEmoji('hourglass')} Retrying in ${delay / 1000} seconds...`));
