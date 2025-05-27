@@ -43,7 +43,7 @@ interface SwapParams {
   sendAmount?: number;
   sendTimes?: number;
   friends?: string[];
-  addLpTimes?: number; // Added for liquidity
+  addLpTimes?: number;
 }
 
 // Configuration file handling
@@ -56,11 +56,10 @@ let config: Config = {
   friendAddresses: process.env.FRIEND_ADDRESSES ? process.env.FRIEND_ADDRESSES.split(',') : [],
 };
 
-// Load and migrate config if exists
+// Load config if exists
 try {
   if (fs.existsSync(CONFIG_PATH)) {
     const rawConfig: any = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-    // Migrate old config format to new format
     if (rawConfig.walletAddress && rawConfig.privateKey && rawConfig.authToken) {
       config.wallets = [
         {
@@ -75,7 +74,6 @@ try {
     } else {
       config = { ...config, ...rawConfig };
     }
-    // Validate wallets
     config.wallets = config.wallets.filter((wallet) => wallet.address && wallet.privateKey && wallet.authToken);
     if (config.wallets.length === 0) {
       console.log(chalk.yellow(`${getEmoji('warning')} No valid wallets found in config`));
@@ -107,7 +105,7 @@ const TOKENS: Tokens = {
     name: 'USDT',
     decimals: 6,
   },
-  WPHRS: { // Added for liquidity
+  WPHRS: {
     address: '0x76aaaDA469D23216bE5f7C596fA25F282Ff9b364',
     name: 'WPHRS',
     decimals: 18,
@@ -115,7 +113,7 @@ const TOKENS: Tokens = {
 };
 
 const ROUTER_ADDRESS: string = '0x1a4de519154ae51200b0ad7c90f7fac75547888a';
-const POSITION_MANAGER_ADDRESS: string = '0xF8a1D4FF0f9b9Af7CE58E1fc1833688F3BFd6115'; // Added for liquidity
+const POSITION_MANAGER_ADDRESS: string = '0xF8a1D4FF0f9b9Af7CE58E1fc1833688F3BFd6115';
 const PHRS_DECIMALS: number = 18;
 const MINIMUM_PHRS_BALANCE: string = '0.01';
 const MINIMUM_TOKEN_BALANCE: string = '0.1';
@@ -135,15 +133,15 @@ const ERC20_ABI: string[] = [
 
 // Router ABI (multicall)
 const ROUTER_ABI: string[] = [
-  'function multicall(uint256 collectionAndSelfcalls, bytes[] data) public',
+  'function multicall(uint256 deadline, bytes[] data) public returns (bytes[])',
 ];
 
-// Added: Liquidity Pool Contract ABI
+// Liquidity Pool Contract ABI
 const ADD_LP_CONTRACT_ABI: string[] = [
   'function mint((address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint256 amount0Desired, uint256 amount1Desired, uint256 amount0Min, uint256 amount1Min, address recipient, uint256 deadline)) public payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)',
 ];
 
-// Fetch token metadata (optional)
+// Fetch token metadata
 interface TokenMetadata {
   tokens: Array<{ address: string; symbol: string }>;
 }
@@ -187,7 +185,7 @@ async function fetchTokenMetadata(): Promise<TokenMetadata | null> {
   }
 }
 
-// Validate tokens (for ERC-20 tokens)
+// Validate tokens
 async function validateTokens(tokenInAddress: string, tokenOutAddress: string): Promise<boolean> {
   const validTokens: string[] = Object.values(TOKENS).map((t: Token) => t.address.toLowerCase());
   const isTokenInValid: boolean = validTokens.includes(tokenInAddress.toLowerCase());
@@ -316,13 +314,13 @@ async function promptForAdditionalWallets(): Promise<void> {
             name: 'privateKey',
             message: `Input your main wallet ${walletNumber} private key (without 0x, press Enter to finish):`,
             validate: (input: string) => {
-              if (input === '') return true; // Allow empty input to exit
+              if (input === '') return true;
               return input.length >= 64 ? true : 'Please enter a valid private key';
             },
           },
         ]);
 
-        if (privateKey === '') break; // Exit if user presses Enter without input
+        if (privateKey === '') break;
 
         const { authToken } = await inquirer.prompt<{ authToken: string }>([
           {
@@ -365,7 +363,7 @@ async function promptForAdditionalWallets(): Promise<void> {
 interface ApiResponse<T = any> {
   data: T;
   msg?: string;
-  code?: number; // Added for verifyTask
+  code?: number;
 }
 
 async function makeApiRequest<T>(method: string, url: string, authToken: string, data: any = {}, retries: number = 3): Promise<ApiResponse<T>> {
@@ -373,18 +371,24 @@ async function makeApiRequest<T>(method: string, url: string, authToken: string,
 
   while (attempt < retries) {
     try {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${authToken}`,
+        'Content-Type': 'application/json',
+        accept: 'application/json, text/plain, */*',
+        origin: 'https://testnet.pharosnetwork.xyz',
+        'user-agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+      };
+
+      // Add Referer header for /task/verify endpoint
+      if (url.includes('/task/verify')) {
+        headers['Referer'] = 'https://testnet.pharosnetwork.xyz/';
+      }
+
       const axiosConfig = {
         method,
         url,
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-          'Content-Type': 'application/json',
-          accept: 'application/json, text/plain, */*',
-          origin: 'https://testnet.pharosnetwork.xyz',
-          referer: 'https://testnet.pharosnetwork.xyz/',
-          'user-agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        },
+        headers,
         data: method === 'POST' ? data : undefined,
       };
       const response = await axios(axiosConfig);
@@ -558,7 +562,7 @@ async function claimTokenFaucet(tokenAddress: string, walletAddress: string): Pr
   return null;
 }
 
-// Check token balance (for ERC-20 tokens or PHRS)
+// Check token balance
 interface BalanceInfo {
   raw: ethers.BigNumber;
   formatted: string;
@@ -571,7 +575,6 @@ async function checkBalance(tokenAddress: string | null, walletAddress: string):
     if (!wallet) throw new Error(`Wallet ${walletAddress} not found`);
 
     if (!tokenAddress) {
-      // Check PHRS (native token) balance
       const balance: ethers.BigNumber = await provider!.getBalance(walletAddress);
       const formattedBalance: string = ethers.utils.formatUnits(balance, PHRS_DECIMALS);
       console.log(chalk.blue(`${getEmoji('bar_chart')} PHRS Balance for ${walletAddress}: ${formattedBalance}`));
@@ -595,7 +598,7 @@ async function checkBalance(tokenAddress: string | null, walletAddress: string):
   }
 }
 
-// Check PHRS balance and attempt faucet claim if insufficient
+// Ensure PHRS balance
 async function ensurePhrsBalance(walletAddress: string, authToken: string, minimumPhrs: string = MINIMUM_PHRS_BALANCE): Promise<boolean> {
   const balanceInfo = await checkBalance(null, walletAddress);
   const minimumBalance = ethers.utils.parseUnits(minimumPhrs, PHRS_DECIMALS);
@@ -613,7 +616,6 @@ async function ensurePhrsBalance(walletAddress: string, authToken: string, minim
     return false;
   }
 
-  // Recheck balance after faucet claim
   const newBalanceInfo = await checkBalance(null, walletAddress);
   if (newBalanceInfo.raw.gte(minimumBalance)) {
     console.log(chalk.green(`${getEmoji('white_check_mark')} PHRS balance sufficient after faucet claim for ${walletAddress}: ${newBalanceInfo.formatted} PHRS`));
@@ -671,31 +673,39 @@ async function checkBalanceAndApproval(tokenAddress: string, amount: number, dec
   }
 }
 
-// Added: Verify task
+// Verify task
 async function verifyTask(walletAddress: string, authToken: string, taskId: string, txHash: string): Promise<boolean> {
   const url = `https://api.pharosnetwork.xyz/task/verify?address=${walletAddress}&task_id=${taskId}&tx_hash=${txHash}`;
+  console.log(chalk.blue(`${getEmoji('hourglass')} Waiting 10 seconds before verifying task ${taskId} for ${walletAddress}...`));
+  await new Promise((resolve) => setTimeout(resolve, 10000));
+
   for (let attempt = 0; attempt < 10; attempt++) {
     try {
-      const response: ApiResponse<{ code: number }> = await makeApiRequest('POST', url, authToken, {});
+      const response: ApiResponse<{ code: number; msg?: string }> = await makeApiRequest('POST', url, authToken, {});
       if (response.code === 0) {
         console.log(chalk.green(`${getEmoji('white_check_mark')} Task ${taskId} verified for ${walletAddress}: ${txHash}`));
         return true;
       }
-      console.log(chalk.yellow(`${getEmoji('hourglass')} Verification attempt ${attempt + 1}/10 for ${walletAddress}, retrying...`));
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      console.log(
+        chalk.yellow(
+          `${getEmoji('hourglass')} Verification attempt ${attempt + 1}/10 for ${walletAddress}, code: ${response.code}, msg: ${response.msg || 'N/A'}, retrying...`
+        )
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10000));
     } catch (error: any) {
       console.error(chalk.red(`${getEmoji('x')} Verification attempt ${attempt + 1}/10 failed for ${walletAddress}: ${error.message}`));
       if (attempt === 9) {
         console.error(chalk.red(`${getEmoji('x')} Task ${taskId} verification failed for ${walletAddress} after 10 attempts`));
         return false;
       }
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await new Promise((resolve) => setTimeout(resolve, 10000));
     }
   }
+  console.error(chalk.red(`${getEmoji('x')} Task ${taskId} verification failed for ${walletAddress} after 10 attempts (no success response)`));
   return false;
 }
 
-// Added: Add liquidity
+// Add liquidity
 async function addLiquidity(walletAddress: string, authToken: string, times: number): Promise<number> {
   const wallet = wallets.find((w) => w.address.toLowerCase() === walletAddress.toLowerCase());
   if (!wallet) {
@@ -711,7 +721,6 @@ async function addLiquidity(walletAddress: string, authToken: string, times: num
   const lpContract = new ethers.Contract(POSITION_MANAGER_ADDRESS, ADD_LP_CONTRACT_ABI, wallet);
   let successCount = 0;
 
-  // Hardcoded to WPHRS/USDC pair, similar to Python code
   const token0 = TOKENS.WPHRS.address;
   const token1 = TOKENS.USDC.address;
   const amount0 = 0.001; // WPHRS amount
@@ -723,7 +732,6 @@ async function addLiquidity(walletAddress: string, authToken: string, times: num
     try {
       console.log(chalk.cyan(`${getEmoji('droplet')} Adding liquidity ${i + 1}/${times} for ${walletAddress}: ${amount0} WPHRS / ${amount1} USDC`));
 
-      // Check and approve tokens
       if (!(await checkBalanceAndApproval(token0, amount0, decimals0, POSITION_MANAGER_ADDRESS, walletAddress))) {
         console.error(chalk.red(`${getEmoji('x')} Insufficient WPHRS balance or approval for ${walletAddress}`));
         continue;
@@ -757,14 +765,14 @@ async function addLiquidity(walletAddress: string, authToken: string, times: num
 
       console.log(chalk.yellow(`${getEmoji('hourglass')} Liquidity addition pending for ${walletAddress}: ${tx.hash}`));
       const receipt = await tx.wait();
-      console.log(chalk.green(`${getEmoji('tada')} Liquidity Tx for ${walletAddress}: ${receipt.transactionHash}`));
+      console.log(chalk.green(`${getEmoji('droplet')} Liquidity Tx for ${walletAddress}: ${receipt.transactionHash}`));
       console.log(chalk.blue(`${getEmoji('mag')} Explorer: https://testnet.pharosscan.xyz/testnet/tx/${receipt.transactionHash}`));
       successCount++;
 
       if (i < times - 1) {
-        const delay = Math.floor(Math.random() * 3000) + 2000;
-        console.log(chalk.blue(`${getEmoji('hourglass')} Waiting ${delay / 1000} seconds before next liquidity addition for ${walletAddress}...`));
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        const delayTime = Math.floor(Math.random() * 3000) + 2000;
+        console.log(chalk.blue(`${getEmoji('hourglass')} Waiting ${delayTime / 1000} seconds before next liquidity addition for ${walletAddress}`));
+        await new Promise((resolve) => setTimeout(resolve, delayTime));
       }
     } catch (error: any) {
       console.error(chalk.red(`${getEmoji('x')} Liquidity addition ${i + 1} failed for ${walletAddress}: ${error.message}`));
@@ -797,7 +805,6 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
     return 0;
   }
 
-  // Check PHRS balance before swapping
   if (!(await ensurePhrsBalance(walletAddress, authToken))) {
     console.error(chalk.red(`${getEmoji('x')} Skipping swaps for ${walletAddress} due to insufficient PHRS`));
     return 0;
@@ -807,7 +814,7 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
   let successCount: number = 0;
 
   if (!(await validateTokens(tokenIn, tokenOut))) {
-    console.error(chalk.red(`${getEmoji('x')} Token validation failed`));
+    console.error(chalk.red(`${getEmoji('warning')} Token validation failed`));
     return 0;
   }
 
@@ -824,31 +831,29 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
 
     while (attempt < maxAttempts) {
       try {
-        console.log(chalk.cyan(`${getEmoji('arrows_counterclockwise')} Swap ${i + 1}/${times} for ${walletAddress}: ${pair.from} -> ${pair.to} (${amount} ${pair.from}) (Attempt ${attempt + 1}/${maxAttempts})`));
+        console.log(
+          chalk.cyan(`${getEmoji('arrows_counterclockwise')} Swap ${i + 1}/${times} for ${walletAddress}: ${pair.from} -> ${pair.to} (${amount} ${pair.from}) (Attempt ${attempt + 1}/${maxAttempts})`)
+        );
 
         if (!(await checkBalanceAndApproval(tokenIn, amount, decimals, ROUTER_ADDRESS, walletAddress))) {
-          console.error(chalk.red(`${getEmoji('x')} Swap ${i + 1} failed for ${walletAddress}: Insufficient balance or approval`));
+          console.error(chalk.red(`${getEmoji('warning')} Swap ${i + 1} failed for ${walletAddress}: Insufficient balance or approval`));
           break;
         }
 
         const multicallData: string[] = getMulticallData(tokenIn, tokenOut, amount, decimals, walletAddress);
         console.log(chalk.blue(`${getEmoji('mag')} Multicall Data for ${walletAddress}: ${JSON.stringify(multicallData)}`));
         if (!multicallData || multicallData.length === 0 || multicallData.some((data) => !data || data === '0x')) {
-          console.error(chalk.red(`${getEmoji('x')} Invalid or empty multicall data for ${pair.from} -> ${pair.to} for ${walletAddress}`));
+          console.error(chalk.red(`${getEmoji('warning')} Invalid or empty multicall data for ${pair.from} -> ${pair.to} for ${walletAddress}`));
           break;
         }
 
         const deadline: number = Math.floor(Date.now() / 1000) + 600;
-        let estimatedGas: ethers.BigNumber;
+        let estimatedGas;
         try {
-          await routerContract.callStatic.multicall(deadline, multicallData, {
-            from: walletAddress,
-          });
-          estimatedGas = await routerContract.estimateGas.multicall(deadline, multicallData, {
-            from: walletAddress,
-          });
+          await routerContract.callStatic.multicall(deadline, multicallData, { from: walletAddress });
+          estimatedGas = await routerContract.estimateGas.multicall(deadline, multicallData, { from: walletAddress });
         } catch (error: any) {
-          console.error(chalk.red(`${getEmoji('x')} Gas estimation or simulation failed for swap ${i + 1} for ${walletAddress}: ${error.message}`));
+          console.error(chalk.red(`${getEmoji('x')} Gas estimation failed for swap ${i + 1} for ${walletAddress}: ${error.message}`));
           break;
         }
 
@@ -860,10 +865,7 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
         });
 
         console.log(chalk.yellow(`${getEmoji('hourglass')} Swap ${i + 1} pending for ${walletAddress}: ${tx.hash}`));
-
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Transaction timed out')), 60000)
-        );
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Transaction timed out')), 60000));
         const receipt = await Promise.race([tx.wait(), timeoutPromise]);
 
         if (receipt.status === 0) {
@@ -874,9 +876,9 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
         successCount++;
 
         if (i < times - 1) {
-          const delay: number = Math.floor(Math.random() * 2000) + 1000;
-          console.log(chalk.blue(`${getEmoji('hourglass')} Waiting ${delay / 1000} seconds before next swap for ${walletAddress}...`));
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          const delayTime: number = Math.floor(Math.random() * 2000) + 1000;
+          console.log(chalk.blue(`${getEmoji('hourglass')} Waiting ${delayTime / 1000} seconds before next swap for ${walletAddress}...`));
+          await new Promise((resolve) => setTimeout(resolve, delayTime));
         }
         break;
       } catch (error: any) {
@@ -890,15 +892,15 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
         }
         if (error.code === 'SERVER_ERROR' && error.status === 500) {
           console.error(chalk.yellow(`${getEmoji('warning')} RPC server error (500). Skipping this swap attempt for ${walletAddress}.`));
-          break; // Skip this swap attempt and move to the next swap
+          break;
         }
         if (attempt >= maxAttempts) {
           console.error(chalk.red(`${getEmoji('x')} Swap ${i + 1} failed for ${walletAddress} after ${maxAttempts} attempts`));
-          break; // Move to the next swap after max attempts
+          break;
         }
-        const delay: number = Math.min(1000 * Math.pow(2, attempt), 10000);
-        console.log(chalk.yellow(`${getEmoji('hourglass')} Retrying in ${delay / 1000} seconds...`));
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        const delayTime: number = Math.min(1000 * Math.pow(2, attempt), 10000);
+        console.log(chalk.yellow(`${getEmoji('hourglass')} Retrying in ${delayTime / 1000} seconds...`));
+        await new Promise((resolve) => setTimeout(resolve, delayTime));
       }
     }
   }
@@ -913,40 +915,34 @@ async function sendToFriends(amount: number, times: number, friends: string[], w
     return 0;
   }
 
-  // Check PHRS balance before sending
   if (!(await ensurePhrsBalance(walletAddress, authToken))) {
     console.error(chalk.red(`${getEmoji('x')} Skipping sends for ${walletAddress} due to insufficient PHRS`));
     return 0;
   }
 
-  const amountWei = ethers.utils.parseUnits(amount.toString(), PHRS_DECIMALS);
+  const amountWei = ethers.utils.parseEther(amount.toString());
   let successCount: number = 0;
 
-  // Determine recipients (friends or main wallets cycle)
-  let recipients: string[] = friends.length > 0 ? friends : config.wallets.map((w) => w.address.toString());
+  let recipients: string[] = friends.length > 0 ? friends : config.wallets.map((w) => w.address);
   if (recipients.length === 0) {
-    console.error(chalk.red(`${getEmoji('warning')} No recipients provided for ${walletAddress}`));
-    return successCount;
+    console.error(chalk.red(`${getEmoji('x')} No recipients configured for ${walletAddress}`));
+    return 0;
   }
 
-  // Determine the recipient for main wallets
   let recipient: string;
   if (friends.length === 0) {
-    const senderIndex = config.wallets.findIndex((w) => w.address.toLowerCase() === walletAddress.toLowerCase());
+    const senderIndex = wallets.findIndex((w) => w.address.toLowerCase() === walletAddress.toLowerCase());
     if (senderIndex === -1) {
       console.error(chalk.red(`${getEmoji('x')} Sender wallet not found in config`));
-      return successCount;
+      return 0;
     }
-    // Set recipient as the next wallet in the list, cycling back to the first if at the end
-    const recipientIndex = (senderIndex + 1) % config.wallets.length;
-    recipient = config.wallets[recipientIndex].address;
+    const recipientIndex = (senderIndex + 1) % recipients.length;
+    recipient = recipients[recipientIndex];
   } else {
-    // For friends, we'll cycle through them in the loop; set a default recipient for the first iteration
     recipient = recipients[0];
   }
 
   for (let i = 0; i < times; i++) {
-    // If using friends, cycle through them
     if (friends.length > 0) {
       const recipientIndex: number = i % recipients.length;
       recipient = recipients[recipientIndex];
@@ -982,16 +978,15 @@ async function sendToFriends(amount: number, times: number, friends: string[], w
       console.log(chalk.green(`${getEmoji('tada')} Send Tx from ${walletAddress}: ${receipt.transactionHash}`));
       console.log(chalk.blue(`${getEmoji('mag')} Explorer: https://testnet.pharosscan.xyz/testnet/tx/${receipt.transactionHash}`));
 
-      // Added: Verify transfer task
       console.log(chalk.blue(`${getEmoji('hourglass')} Verifying transfer task for ${walletAddress}...`));
       await verifyTask(walletAddress, authToken, '103', receipt.transactionHash);
 
       successCount++;
 
       if (i < times - 1) {
-        const delay: number = Math.floor(Math.random() * 3000) + 2000;
-        console.log(chalk.blue(`${getEmoji('hourglass')} Waiting ${delay / 1000} seconds before next transfer from ${walletAddress}...`));
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        const delayTime: number = Math.floor(Math.random() * 3000) + 2000;
+        console.log(chalk.blue(`${getEmoji('hourglass')} Waiting ${delayTime / 1000} seconds before next transfer from ${walletAddress}...`));
+        await new Promise((resolve) => setTimeout(resolve, delayTime));
       }
     } catch (error: any) {
       console.error(chalk.red(`${getEmoji('x')} Send from ${walletAddress} to ${recipient} Error: ${error.message}`));
@@ -1006,35 +1001,28 @@ async function sendToFriends(amount: number, times: number, friends: string[], w
 async function runDailyTasks(featureNumber: number, params: SwapParams, wallet: WalletConfig): Promise<FaucetStatus | null> {
   console.log(chalk.blue(`${getEmoji('rocket')} Running daily tasks for Feature ${featureNumber} (Wallet: ${wallet.address})...`));
 
-  // Always claim faucets first
   await claimDailyFaucet(wallet.address, wallet.authToken);
   await checkFaucetStatus(wallet.address, wallet.authToken);
 
-  // Claim USDC faucet for swaps or liquidity
   if ((featureNumber === 1 || featureNumber === 2 || featureNumber === 4 || featureNumber === 5) && params.tokenIn) {
     await claimTokenFaucet(TOKENS.USDC.address, wallet.address);
   }
-  // Added: Claim WPHRS faucet for liquidity
   if (featureNumber === 5) {
     await claimTokenFaucet(TOKENS.WPHRS.address, wallet.address);
   }
 
-  // Perform daily sign-in and profile checks
   await dailySignIn(wallet.address, wallet.authToken);
   await checkSignInStatus(wallet.address, wallet.authToken);
   await getUserProfile(wallet.address, wallet.authToken);
 
-  // Handle swaps for features 1, 2, 4
-  if ((featureNumber === 1 || featureNumber === 2 || featureNumber === 4) && params.tokenIn && params.tokenOut && params.swapAmount && params.swapTimes) {
+  if ((featureNumber === 1 || featureNumber === 2 || featureNumber === 4 || featureNumber === 5) && params.tokenIn && params.tokenOut && params.swapAmount && params.swapTimes) {
     await swapTokens(params.tokenIn, params.tokenOut, params.swapAmount, params.swapTimes, wallet.address, wallet.authToken);
   }
 
-  // Handle PHRS sends for features 1, 4
-  if ((featureNumber === 1 || featureNumber === 4) && params.sendAmount && params.sendTimes && params.friends) {
+  if ((featureNumber === 1 || featureNumber === 4 || featureNumber === 5) && params.sendAmount && params.sendTimes && params.friends) {
     await sendToFriends(params.sendAmount, params.sendTimes, params.friends, wallet.address, wallet.authToken);
   }
 
-  // Added: Handle liquidity addition for feature 5
   if (featureNumber === 5 && params.addLpTimes) {
     await addLiquidity(wallet.address, wallet.authToken, params.addLpTimes);
   }
@@ -1076,7 +1064,7 @@ async function scheduleAndLogTasks(featureNumber: number, params: SwapParams = {
 // Configuration Menu
 async function configMenu(): Promise<void> {
   console.clear();
-  console.log(chalk.cyan(`${getEmoji('gear')} ========================================================`));
+  console.log(chalk.cyan(`${getEmoji('gear')} ==============================================`));
   console.log(chalk.cyan(`${getEmoji('gear')} Configuration Settings`));
   console.log(chalk.cyan(`${getEmoji('gear')} ==============================================`));
 
@@ -1238,9 +1226,9 @@ async function manageWalletsMenu(): Promise<void> {
 // Manage friends menu
 async function manageFriendsMenu(): Promise<void> {
   console.clear();
-  console.log(chalk.cyan(`${getEmoji('busts_in_silhouette')} ================================================`));
+  console.log(chalk.cyan(`${getEmoji('busts_in_silhouette')} ==============================================`));
   console.log(chalk.cyan(`${getEmoji('busts_in_silhouette')} Friend Addresses Management`));
-  console.log(chalk.cyan(`${getEmoji('busts_in_silhouette')} ======================================`));
+  console.log(chalk.cyan(`${getEmoji('busts_in_silhouette')} ==============================================`));
 
   if (config.friendAddresses && config.friendAddresses.length > 0) {
     console.log(chalk.blue(`Current friends (${config.friendAddresses.length}):`));
@@ -1267,7 +1255,7 @@ async function manageFriendsMenu(): Promise<void> {
           type: 'input',
           name: 'address',
           message: `${getEmoji('bust_in_silhouette')} Enter friend's address:`,
-          validate: (input: string) => (ethers.utils.isAddress(input) ? true : 'Please enter a valid Ethereum address'),
+          validate: (input: string) => ethers.utils.isAddress(input) ? true : 'Please enter a valid Ethereum address',
         },
       ]);
       if (!config.friendAddresses) config.friendAddresses = [];
@@ -1287,7 +1275,10 @@ async function manageFriendsMenu(): Promise<void> {
           type: 'list',
           name: 'indexToRemove',
           message: 'Select friend to remove:',
-          choices: config.friendAddresses.map((addr: string, i: number) => ({ name: `${i + 1}. ${addr}`, value: i })),
+          choices: config.friendAddresses.map((addr: string, i: number) => ({
+            name: `${i + 1}. ${addr}`,
+            value: i,
+          })),
         },
       ]);
 
@@ -1347,9 +1338,9 @@ async function mainMenu(): Promise<void> {
   console.log(chalk.green(` * ${getEmoji('two')} [2] Swap and Check In (All Wallets) *`));
   console.log(chalk.green(` * ${getEmoji('three')} [3] Check In Only (All Wallets) *`));
   console.log(chalk.green(` * ${getEmoji('four')} [4] Swap, Check In, and Send PHRS to Friends/Wallets (All Wallets) *`));
-  console.log(chalk.green(` * ${getEmoji('five')} [5] Add Liquidity (All Wallets) *`)); // Added
+  console.log(chalk.green(` * ${getEmoji('five')} [5] Swap, Check In, Send PHRS, and Add Liquidity (All Wallets) *`));
   console.log(chalk.green(` * ${getEmoji('wrench')} [6] Configuration *`));
-  console.log(chalk.green(` * ${getEmoji('x')} [7] Exit *`)); // Adjusted number
+  console.log(chalk.green(` * ${getEmoji('x')} [7] Exit *`));
   console.log(chalk.green(`${getEmoji('star')} ${'*'.repeat(50)}`));
 
   const { feature } = await inquirer.prompt<{ feature: string }>([
@@ -1362,7 +1353,7 @@ async function mainMenu(): Promise<void> {
         '2 - Swap and Check In (All Wallets)',
         '3 - Check In Only (All Wallets)',
         '4 - Swap, Check In, and Send PHRS to Friends/Wallets (All Wallets)',
-        '5 - Add Liquidity (All Wallets)', // Added
+        '5 - Swap, Check In, Send PHRS, and Add Liquidity (All Wallets)',
         '6 - Configuration',
         '7 - Exit',
       ],
@@ -1383,7 +1374,7 @@ async function mainMenu(): Promise<void> {
   }
 
   let params: SwapParams = {};
-  if (featureNumber === 1 || featureNumber === 2 || featureNumber === 4) {
+  if (featureNumber === 1 || featureNumber === 2 || featureNumber === 4 || featureNumber === 5) {
     const { swapDirection, swapAmount, swapTimes } = await inquirer.prompt<{
       swapDirection: 'USDC_TO_USDT' | 'USDT_TO_USDC';
       swapAmount: number;
@@ -1421,7 +1412,7 @@ async function mainMenu(): Promise<void> {
     params.swapTimes = swapTimes;
   }
 
-  if (featureNumber === 1 || featureNumber === 4) {
+  if (featureNumber === 1 || featureNumber === 4 || featureNumber === 5) {
     const { sendAmount, sendTimes, useFriends } = await inquirer.prompt<{
       sendAmount: number;
       sendTimes: number;
@@ -1459,7 +1450,6 @@ async function mainMenu(): Promise<void> {
     params.friends = useFriends ? config.friendAddresses : [];
   }
 
-  // Added: Prompt for liquidity addition
   if (featureNumber === 5) {
     const { addLpTimes } = await inquirer.prompt<{
       addLpTimes: number;
@@ -1481,27 +1471,27 @@ async function mainMenu(): Promise<void> {
 
 // Initialize and start
 async function start(): Promise<void> {
-  console.log(chalk.cyan(`${getEmoji('rocket')} Initializing Pharos Bot...`));
+  console.log(chalk.cyan(`${getEmoji('rocket')} Starting Pharos Automatic Bot...`));
+
   if (!(await initProvider())) {
     console.error(chalk.red(`${getEmoji('x')} Failed to initialize provider. Exiting...`));
     process.exit(1);
   }
 
-  await promptForAdditionalWallets();
-
   if (!(await setupWallets())) {
-    console.log(chalk.yellow(`${getEmoji('warning')} Please configure at least one valid main wallet`));
+    console.log(chalk.yellow(`${getEmoji('warning')} No valid wallets configured. Please add wallets.`));
     await configMenu();
     if (!(await setupWallets())) {
-      console.error(chalk.red(`${getEmoji('x')} Wallet setup failed. Exiting...`));
+      console.error(chalk.red(`${getEmoji('x')} No valid wallets configured after setup. Exiting...`));
       process.exit(1);
     }
   }
 
+  await promptForAdditionalWallets();
   await mainMenu();
 }
 
-start().catch((error: any) => {
+start().catch((error) => {
   console.error(chalk.red(`${getEmoji('x')} Fatal Error: ${error.message}`));
   process.exit(1);
 });
