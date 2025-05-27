@@ -392,14 +392,14 @@ async function claimTokenFaucet(tokenAddress: string, walletAddress: string): Pr
       const response: AxiosResponse<{
         status: number;
         message: string;
-        data: { txHash: string };
+        data: { txHash: string } | null;
       }> = await axios.post(url, payload, {
         headers: {
           'Content-Type': 'application/json',
-          accept: '*/*',
-          'user-agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+          accept: 'application/json',
+          'user-agent': 'pharos-bot/1.0.0',
         },
+        timeout: 10000,
       });
       if (response.data.status === 200 && response.data.data?.txHash) {
         console.log(
@@ -407,14 +407,15 @@ async function claimTokenFaucet(tokenAddress: string, walletAddress: string): Pr
         );
         return response.data.data.txHash;
       }
-      throw new Error('No transaction hash');
+      throw new Error(response.data.message || 'No transaction hash');
     } catch (error: any) {
       attempt++;
+      const errorMsg: string = error.response?.status === 429 ? 'Rate limit exceeded' : error.message;
       console.error(
-        chalk.red(`${getEmoji('x')} ${tokenName} Faucet error ${walletAddress} (Attempt ${attempt}/3): ${error.message}`)
+        chalk.red(`${getEmoji('x')} ${tokenName} Faucet error ${walletAddress} (Attempt ${attempt}/3): ${errorMsg}`)
       );
       if (attempt >= 3) return null;
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 5000 * attempt));
     }
   }
   return null;
@@ -587,7 +588,7 @@ async function unwrapPhrs(amount: number, walletAddress: string, authToken: stri
     const feeData: ethers.providers.FeeData = await provider!.getFeeData();
     const tx: ethers.ContractTransaction = await contract.withdraw(amountWei, {
       gasLimit: Math.ceil(Number(gas) * 1.2),
-      maxFeePerGas: feeData.maxFeePerGas || ethers.utils.parseUnits('2', 'gwei'),
+      maxFeePerGas: feeData.maxFeePerGas || ethers.utils.parseUnits('1', 'gwei'),
       maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.utils.parseUnits('1', 'gwei'),
     });
     await tx.wait();
@@ -608,20 +609,15 @@ async function addLiquidity(
   authToken: string
 ): Promise<boolean> {
   if (!(await ensurePhrsBalance(walletAddress, authToken))) return false;
-  const wallet: ethers.Wallet | undefined = wallets.find(
-    w => w.address.toLowerCase() === walletAddress.toLowerCase()
-  );
+  const wallet: ethers.Wallet | undefined = wallets.find(w => w.address.toLowerCase() === walletAddress.toLowerCase());
   if (!wallet) {
     console.error(chalk.red(`${getEmoji('x')} Wallet not found: ${walletAddress}`));
     return false;
   }
   try {
-    const [token0, token1]: [string, string] =
-      tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
-    const decimals0: number =
-      TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === token0.toLowerCase())!].decimals;
-    const decimals1: number =
-      TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === token1.toLowerCase())!].decimals;
+    const [token0, token1]: [string, string] = tokenA.toLowerCase() < tokenB.toLowerCase() ? [tokenA, tokenB] : [tokenB, tokenA];
+    const decimals0: number = TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === token0.toLowerCase())!].decimals || 6;
+    const decimals1: number = TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === token1.toLowerCase())!].decimals || 6;
     const balance0: BalanceInfo = await checkBalance(token0, walletAddress);
     const balance1: BalanceInfo = await checkBalance(token1, walletAddress);
     const amount0: BigNumber = ethers.utils.parseUnits(
@@ -703,11 +699,13 @@ async function swapTokens(
     return 0;
   }
   const decimals: number =
-    TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === tokenIn.toLowerCase())!].decimals;
+    TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === tokenIn.toLowerCase())!]?.decimals || 6;
   const tokenNameIn: string =
-    TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === tokenIn.toLowerCase())!].name;
+    TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === tokenIn.toLowerCase())!]?.name ||
+    'Token';
   const tokenNameOut: string =
-    TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === tokenOut.toLowerCase())!].name;
+    TOKENS[Object.keys(TOKENS).find(k => TOKENS[k].address.toLowerCase() === tokenOut.toLowerCase())!]?.name ||
+    'Token';
   const router: ethers.Contract = new ethers.Contract(CONTRACTS.ROUTER, ROUTER_ABI, wallet);
   let successCount: number = 0;
 
@@ -896,7 +894,7 @@ async function runDailyTasks(
         wallet.address,
         wallet.authToken
       );
-      await verifyTask('swap_task', wallet.address, wallet.authToken); // Example task ID
+      await verifyTask('swap_task', wallet.address, wallet.authToken);
     }
     if ((featureNumber === 1 || featureNumber === 4) && params.liquidityPercentage) {
       await addLiquidity(
@@ -906,17 +904,17 @@ async function runDailyTasks(
         wallet.address,
         wallet.authToken
       );
-      await verifyTask('liquidity_task', wallet.address, wallet.authToken); // Example task ID
+      await verifyTask('liquidity_task', wallet.address, wallet.authToken);
     }
-    await wrapPhrs(0.1, wallet.address, wallet.authToken); // Fixed amount for consistency
-    await verifyTask('wrap_task', wallet.address, wallet.authToken); // Example task ID
+    await wrapPhrs(0.1, wallet.address, wallet.authToken);
+    await verifyTask('wrap_task', wallet.address, wallet.authToken);
     await unwrapPhrs(0.1, wallet.address, wallet.authToken);
-    await verifyTask('unwrap_task', wallet.address, wallet.authToken); // Example task ID
+    await verifyTask('unwrap_task', wallet.address, wallet.authToken);
   }
   if (featureNumber === 1 || featureNumber === 4) {
     if (params.sendAmount && params.sendTimes && params.friends) {
       await sendToFriends(params.sendAmount, params.sendTimes, params.friends, wallet.address, wallet.authToken);
-      await verifyTask('send_task', wallet.address, wallet.authToken); // Example task ID
+      await verifyTask('send_task', wallet.address, wallet.authToken);
     }
   }
 
@@ -1253,7 +1251,7 @@ async function mainMenu(): Promise<void> {
     },
   ]);
 
-  const featureNumber: number = parseInt(answers.feature);
+  const featureNumber: number = parseInt(answers.feature.split(' - ')[0]);
 
   if (featureNumber === 5) {
     await configMenu();
