@@ -2,9 +2,9 @@
   "name": "pharos-bot",
   "version": "1.0.0",
   "description": "Pharos Testnet Automation Bot",
-  "main": "index.js",
+  "main": "dist/index.js", 
   "scripts": {
-    "start": "tsc && node index.js",
+    "start": "tsc && node dist/index.js", 
     "build": "tsc",
     "dev": "tsc --watch"
   },
@@ -22,6 +22,6 @@
     "@types/node-emoji": "^1.8.2",
     "typescript": "^5.5.2"
   },
-  "author": "aetrna",
+  "author": "",
   "license": "MIT"
 }
