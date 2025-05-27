@@ -1,18 +1,15 @@
 {
   "name": "pharos-bot",
   "version": "1.0.0",
-  "description": "Pharos Network Automated Bot",
-  "main": "dist/index.js",
+  "description": "Pharos Testnet Automation Bot",
+  "main": "index.js",
   "scripts": {
+    "start": "tsc && node index.js",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsc && node dist/index.js"
+    "dev": "tsc --watch"
   },
-  "keywords": ["pharos", "blockchain", "bot"],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "axios": "^1.7.7",
+    "axios": "^1.7.2",
     "chalk": "^4.1.2",
     "dotenv": "^16.4.5",
     "ethers": "^5.7.2",
@@ -21,8 +18,10 @@
   },
   "devDependencies": {
     "@types/inquirer": "^8.2.10",
-    "@types/node": "^20.16.5",
+    "@types/node": "^20.14.9",
     "@types/node-emoji": "^1.8.2",
-    "typescript": "^5.6.2"
-  }
+    "typescript": "^5.5.2"
+  },
+  "author": "aetrna",
+  "license": "MIT"
 }
