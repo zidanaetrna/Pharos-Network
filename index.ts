@@ -1475,32 +1475,36 @@ async function mainMenu(): Promise<void> {
       swapDirection: 'USDC_TO_USDT' | 'USDT_TO_USDC' | 'WPHRS_TO_USDC' | 'WPHRS_TO_USDT' | 'USDC_TO_WPHRS' | 'USDT_TO_WPHRS';
       swapAmount: number;
       swapTimes: number;
-    }>({
-      type: 'list',
-      name: 'swapDirection',
-      message: 'Select swap direction:',
-      choices: [
-        { name: 'USDC → USDT', value: 'USDC_TO_USDT' },
-        { name: 'USDT → USDC', value: 'USDT_TO_USDC' },
-        { name: 'WPHRS → USDC', value: 'WPHRS_TO_USDC' },
-        { name: 'WPHRS → USDT', value: 'WPHRS_TO_USDT' },
-        { name: 'USDC → WPHRS', value: 'USDC_TO_WPHRS' },
-        { name: 'USDT → WPHRS', value: 'USDT_TO_WPHRS' },
-      ],
-      default: 'USDC_TO_USDT',
-    }, {
-      type: 'number',
-      name: 'swapAmount',
-      message: 'Enter swap amount:',
-      default: 0.1,
-      validate: (input: number) => (input > 0 ? true : 'Amount must be positive'),
-    }, {
-      type: 'number',
-      name: 'swapTimes',
-      message: 'Enter number of swaps:',
-      default: 1,
-      validate: (input: number) => (input >= 1 ? true : 'Number of swaps must be at least 1'),
-    });
+    }>([
+      {
+        type: 'list',
+        name: 'swapDirection',
+        message: 'Select swap direction:',
+        choices: [
+          { name: 'USDC → USDT', value: 'USDC_TO_USDT' },
+          { name: 'USDT → USDC', value: 'USDT_TO_USDC' },
+          { name: 'WPHRS → USDC', value: 'WPHRS_TO_USDC' },
+          { name: 'WPHRS → USDT', value: 'WPHRS_TO_USDT' },
+          { name: 'USDC → WPHRS', value: 'USDC_TO_WPHRS' },
+          { name: 'USDT → WPHRS', value: 'USDT_TO_WPHRS' },
+        ],
+        default: 'USDC_TO_USDT',
+      },
+      {
+        type: 'number',
+        name: 'swapAmount',
+        message: 'Enter swap amount:',
+        default: 0.1,
+        validate: (input: number) => (input > 0 ? true : 'Amount must be positive'),
+      },
+      {
+        type: 'number',
+        name: 'swapTimes',
+        message: 'Enter number of swaps:',
+        default: 1,
+        validate: (input: number) => (input >= 1 ? true : 'Number of swaps must be at least 1'),
+      },
+    ]);
 
     params.tokenIn = swapDirection === 'USDC_TO_USDT' ? TOKENS.USDC.address :
                      swapDirection === 'USDT_TO_USDC' ? TOKENS.USDT.address :
@@ -1523,29 +1527,33 @@ async function mainMenu(): Promise<void> {
       sendAmount: number;
       sendTimes: number;
       useFriends: boolean;
-    }>({
-      type: 'list',
-      name: 'sendAmount',
-      message: 'Select amount to send (PHRS):',
-      choices: [
-        { name: '0.001 PHRS', value: 0.001 },
-        { name: '0.05 PHRS', value: 0.05 },
-        { name: '0.1 PHRS', value: 0.1 },
-        { name: '0.2 PHRS', value: 0.2 },
-      ],
-      default: 0.1,
-    }, {
-      type: 'number',
-      name: 'sendTimes',
-      message: 'Enter number of sends (iterations):',
-      default: 10,
-      validate: (input: number) => (input >= 1 ? true : 'Number of sends must be at least 1'),
-    }, {
-      type: 'confirm',
-      name: 'useFriends',
-      message: 'Send to friend addresses instead of cycling through main wallets?',
-      default: config.friendAddresses.length > 0,
-    });
+    }>([
+      {
+        type: 'list',
+        name: 'sendAmount',
+        message: 'Select amount to send (PHRS):',
+        choices: [
+          { name: '0.001 PHRS', value: 0.001 },
+          { name: '0.05 PHRS', value: 0.05 },
+          { name: '0.1 PHRS', value: 0.1 },
+          { name: '0.2 PHRS', value: 0.2 },
+        ],
+        default: 0.1,
+      },
+      {
+        type: 'number',
+        name: 'sendTimes',
+        message: 'Enter number of sends (iterations):',
+        default: 10,
+        validate: (input: number) => (input >= 1 ? true : 'Number of sends must be at least 1'),
+      },
+      {
+        type: 'confirm',
+        name: 'useFriends',
+        message: 'Send to friend addresses instead of cycling through main wallets?',
+        default: config.friendAddresses.length > 0,
+      },
+    ]);
 
     params.sendAmount = sendAmount;
     params.sendTimes = sendTimes;
@@ -1560,19 +1568,22 @@ async function mainMenu(): Promise<void> {
     const { wrapAmount, unwrapAmount } = await inquirer.prompt<{
       wrapAmount: number;
       unwrapAmount: number;
-    }>({
-      type: 'number',
-      name: 'wrapAmount',
-      message: 'Enter amount of PHRS to wrap to WPHRS:',
-      default: 0.1,
-      validate: (input: number) => (input > 0 ? true : 'Amount must be positive'),
-    }, {
-      type: 'number',
-      name: 'unwrapAmount',
-      message: 'Enter amount of WPHRS to unwrap to PHRS:',
-      default: 0.1,
-      validate: (input: number) => (input > 0 ? true : 'Amount must be positive'),
-    });
+    }>([
+      {
+        type: 'number',
+        name: 'wrapAmount',
+        message: 'Enter amount of PHRS to wrap to WPHRS:',
+        default: 0.1,
+        validate: (input: number) => (input > 0 ? true : 'Amount must be positive'),
+      },
+      {
+        type: 'number',
+        name: 'unwrapAmount',
+        message: 'Enter amount of WPHRS to unwrap to PHRS:',
+        default: 0.1,
+        validate: (input: number) => (input > 0 ? true : 'Amount must be positive'),
+      },
+    ]);
 
     params.wrapAmount = wrapAmount;
     params.unwrapAmount = unwrapAmount;
