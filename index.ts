@@ -882,22 +882,65 @@ async function checkBalanceAndApproval(tokenAddress: string, amount: number, dec
   }
 }
 
-// Generate multicall data
-function getMulticallData(tokenIn: string, tokenOut: string, amount: number, decimals: number, walletAddress: string): string[] {
+// Generate multicall data for swap
+function getMulticallData(tokenIn: string, tokenOut: string, amount: number, decimals: number, walletAddress: string, fee: number = 500): string[] {
   try {
+    // Validate token addresses
+    if (!ethers.utils.isAddress(tokenIn) || !ethers.utils.isAddress(tokenOut)) {
+      throw new Error(`Invalid token addresses: ${tokenIn}, ${tokenOut}`);
+    }
+
     const scaledAmount = ethers.utils.parseUnits(amount.toString(), decimals);
+    // Ensure token order (token0 < token1)
+    const [token0, token1] = tokenIn.toLowerCase() < tokenOut.toLowerCase() ? [tokenIn, tokenOut] : [tokenOut, tokenIn];
+    const isToken0In = tokenIn.toLowerCase() === token0.toLowerCase();
+
+    // Calculate deadline (10 minutes from now)
+    const deadline = Math.floor(Date.now() / 1000) + 600;
+
+    // Encode exactInputSingle parameters
+    const params = {
+      tokenIn,
+      tokenOut,
+      fee, // Pool fee tier (e.g., 500 for 0.05%)
+      recipient: walletAddress,
+      deadline,
+      amountIn: scaledAmount,
+      amountOutMinimum: 0, // Accept any output (adjust for production)
+      sqrtPriceLimitX96: 0, // No price limit
+    };
+
     const data = ethers.utils.defaultAbiCoder.encode(
-      ['address', 'uint256', 'uint24', 'address', 'uint256', 'uint256', 'uint256'],
-      [tokenIn, scaledAmount, 500, walletAddress, scaledAmount, 0, 0]
+      ['address', 'address', 'uint24', 'address', 'uint256', 'uint256', 'uint256', 'uint160'],
+      [
+        params.tokenIn,
+        params.tokenOut,
+        params.fee,
+        params.recipient,
+        params.deadline,
+        params.amountIn,
+        params.amountOutMinimum,
+        params.sqrtPriceLimitX96,
+      ]
     );
-    return [ethers.utils.hexConcat(['0x04e45aaf', data])];
+
+    // Uniswap V3-style exactInputSingle function selector
+    return [ethers.utils.hexConcat(['0x414bf389', data])];
   } catch (error: any) {
     console.error(chalk.red(`${getEmoji('x')} Failed to generate multicall data: ${error.message}`));
     return [];
   }
 }
 
-async function swapTokens(tokenIn: string, tokenOut: string, amount: number, times: number, walletAddress: string, authToken: string): Promise<number> {
+// Perform token swaps
+async function swapTokens(
+  tokenIn: string,
+  tokenOut: string,
+  amount: number,
+  times: number,
+  walletAddress: string,
+  authToken: string
+): Promise<number> {
   const wallet = wallets.find((w) => w.address.toLowerCase() === walletAddress.toLowerCase());
   if (!wallet) {
     console.error(chalk.red(`${getEmoji('x')} Wallet ${walletAddress} not found`));
@@ -926,6 +969,9 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
 
   const decimals: number = tokenInKey ? TOKENS[tokenInKey].decimals : 6;
 
+  // Try multiple fee tiers if one fails
+  const feeTiers = [500, 3000, 10000]; // 0.05%, 0.3%, 1%
+
   for (let i = 0; i < times; i++) {
     let attempt: number = 0;
     const maxAttempts: number = 3;
@@ -943,28 +989,58 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
           break;
         }
 
-        const multicallData: string[] = getMulticallData(tokenIn, tokenOut, amount, decimals, walletAddress);
-        console.log(chalk.blue(`${getEmoji('mag')} Multicall Data for ${walletAddress}: ${JSON.stringify(multicallData)}`));
-        if (!multicallData || multicallData.length === 0 || multicallData.some((data) => !data || data === '0x')) {
-          console.error(chalk.red(`${getEmoji('x')} Invalid or empty multicall data for ${pair.from} -> ${pair.to} for ${walletAddress}`));
+        let multicallData: string[] = [];
+        let feeUsed: number = 0;
+
+        // Calculate deadline for this attempt
+        const deadline: number = Math.floor(Date.now() / 1000) + 600;
+
+        // Try each fee tier
+        for (const fee of feeTiers) {
+          multicallData = getMulticallData(tokenIn, tokenOut, amount, decimals, walletAddress, fee);
+          console.log(chalk.blue(`${getEmoji('mag')} Multicall Data for ${walletAddress} (Fee ${fee}): ${JSON.stringify(multicallData)}`));
+
+          if (!multicallData || multicallData.length === 0 || multicallData.some((data) => !data || data === '0x')) {
+            console.error(chalk.red(`${getEmoji('x')} Invalid or empty multicall data for ${pair.from} -> ${pair.to} (Fee ${fee})`));
+            continue;
+          }
+
+          // Simulate the transaction
+          try {
+            await routerContract.callStatic.multicall(deadline, multicallData, { from: walletAddress });
+            feeUsed = fee;
+            break; // Success, use this fee tier
+          } catch (simulationError: any) {
+            console.warn(chalk.yellow(`${getEmoji('warning')} Simulation failed for fee ${fee}: ${simulationError.message}`));
+            if (fee === feeTiers[feeTiers.length - 1]) {
+              throw new Error(`All fee tiers failed: ${simulationError.message}`);
+            }
+          }
+        }
+
+        if (multicallData.length === 0 || !feeUsed) {
+          console.error(chalk.red(`${getEmoji('x')} No valid fee tier found for ${pair.from} -> ${pair.to}`));
           break;
         }
 
-        const deadline: number = Math.floor(Date.now() / 1000) + 600;
+        // Estimate gas
         let estimatedGas: ethers.BigNumber;
         try {
-          await routerContract.callStatic.multicall(deadline, multicallData, { from: walletAddress });
           estimatedGas = await routerContract.estimateGas.multicall(deadline, multicallData, { from: walletAddress });
-        } catch (error: any) {
-          console.error(chalk.red(`${getEmoji('x')} Gas estimation or simulation failed for swap ${i + 1} for ${walletAddress}: ${error.message}`));
-          break;
+        } catch (gasError: any) {
+          console.error(chalk.red(`${getEmoji('x')} Gas estimation failed for swap ${i + 1}: ${gasError.message}`));
+          throw gasError;
         }
 
         const feeData = await provider!.getFeeData();
+        const gasLimit = estimatedGas.mul(120).div(100); // 1.2x buffer
+        const maxFeePerGas = feeData.maxFeePerGas || ethers.utils.parseUnits('5', 'gwei');
+        const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || ethers.utils.parseUnits('1', 'gwei');
+
         const tx = await routerContract.multicall(deadline, multicallData, {
-          gasLimit: Math.ceil(Number(estimatedGas) * 1.5),
-          maxFeePerGas: feeData.maxFeePerGas || ethers.utils.parseUnits('5', 'gwei'),
-          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.utils.parseUnits('1', 'gwei'),
+          gasLimit,
+          maxFeePerGas,
+          maxPriorityFeePerGas,
         });
 
         console.log(chalk.yellow(`${getEmoji('hourglass')} Swap ${i + 1} pending for ${walletAddress}: ${tx.hash}`));
@@ -975,6 +1051,7 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
         if (receipt.status === 0) {
           throw new Error(`Transaction reverted: ${tx.hash}`);
         }
+
         console.log(chalk.green(`${getEmoji('rocket')} Swap ${i + 1} Tx for ${walletAddress}: ${receipt.transactionHash}`));
         console.log(chalk.blue(`${getEmoji('mag')} Explorer: https://testnet.pharosscan.xyz/testnet/tx/${receipt.transactionHash}`));
 
@@ -1003,6 +1080,9 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
         if (error.receipt) {
           console.log(chalk.red(`${getEmoji('x')} Receipt: ${JSON.stringify(error.receipt)}`));
         }
+        if (error.code === 'CALL_EXCEPTION') {
+          console.error(chalk.yellow(`${getEmoji('warning')} Contract call exception: ${JSON.stringify(error.data || {})}`));
+        }
         if (error.code === 'SERVER_ERROR' && error.status === 500) {
           console.error(chalk.yellow(`${getEmoji('warning')} RPC server error (500). Skipping this swap attempt for ${walletAddress}`));
           break;
@@ -1017,6 +1097,7 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
       }
     }
   }
+
   console.log(chalk.green(`${getEmoji('chart_with_upwards_trend')} Swap Summary for ${walletAddress}: ${successCount}/${times} successful swaps`));
   return successCount;
 }
