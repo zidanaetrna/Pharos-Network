@@ -1062,7 +1062,7 @@ async function sendToFriends(
 
         console.log(chalk.yellow(`${getEmoji('hourglass')} Transfer pending from ${walletAddress}: ${tx.hash}`));
         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Transaction timed out')), 60000));
-        const receipt: ethers.TransactionReceipt = await Promise.race([tx.wait(), timeoutPromise]);
+        const receipt: ethers.providers.TransactionReceipt = await Promise.race([tx.wait(), timeoutPromise]);
 
         if (receipt.status === 0) {
           throw new Error(`Transaction reverted: ${tx.hash}`);
