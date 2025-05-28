@@ -1061,8 +1061,36 @@ async function sendToFriends(
         });
 
         console.log(chalk.yellow(`${getEmoji('hourglass')} Transfer pending from ${walletAddress}: ${tx.hash}`));
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Transaction timed out')), 60000));
-        const receipt: ethers.providers.TransactionReceipt = await Promise.race([tx.wait(), timeoutPromise]);
+        
+        // Define timeout promise
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Transaction timed out')), 60000)
+        );
+
+        // Wait for transaction with timeout
+        let receipt: ethers.providers.TransactionReceipt | undefined;
+        try {
+          receipt = await Promise.race([tx.wait(), timeoutPromise]);
+        } catch (error: any) {
+          if (error.message.includes('Transaction timed out')) {
+            console.error(chalk.yellow(`${getEmoji('warning')} Transaction timed out for ${tx.hash}, skipping...`));
+            attempt++;
+            if (attempt >= maxAttempts) {
+              console.error(chalk.red(`${getEmoji('x')} Send ${i + 1} failed for ${walletAddress} after ${maxAttempts} attempts`));
+              break;
+            }
+            const delayTime = Math.min(1000 * Math.pow(2, attempt), 10000);
+            console.log(chalk.yellow(`${getEmoji('hourglass')} Retrying in ${delayTime / 1000} seconds...`));
+            await new Promise((resolve) => setTimeout(resolve, delayTime));
+            continue;
+          }
+          throw error;
+        }
+
+        if (!receipt) {
+          console.error(chalk.red(`${getEmoji('x')} No receipt received for ${tx.hash}`));
+          break;
+        }
 
         if (receipt.status === 0) {
           throw new Error(`Transaction reverted: ${tx.hash}`);
