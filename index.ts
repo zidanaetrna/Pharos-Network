@@ -366,51 +366,55 @@ interface ApiResponse<T = any> {
   code?: number;
 }
 
-async function makeApiRequest<T>(method: string, url: string, authToken: string, data: any = {}, retries: number = 3): Promise<ApiResponse<T>> {
-  let attempt: number = 0;
+async function makeApiRequest<T>(method: 'GET' | 'POST', url: string, authToken: string, data: any = {}, retries: number = 3): Promise<ApiResponse<T>> {
+  let attempt = 0;
 
   while (attempt < retries) {
     try {
       const headers: Record<string, string> = {
-        Authorization: `Bearer ${authToken}`,
-        'Content-Type': 'application/json',
-        accept: 'application/json, text/plain, */*',
-        origin: 'https://testnet.pharosnetwork.xyz',
-        'user-agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Origin': 'https://testnet.pharosnetwork.xyz',
+        'Referer': 'https://testnet.pharosnetwork.xyz/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-site',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+        'Authorization': `Bearer ${authToken}`,
       };
 
-      // Add Referer header for /task/verify endpoint if not already set
-      if (url.includes('/task/verify') && !headers['Referer']) {
-        headers['Referer'] = 'https://testnet.pharosnetwork.xyz/';
-      }
-      // Add default Referer header for other Pharos API endpoints if not already set
-      else if (url.includes('api.pharosnetwork.xyz') && !headers['Referer']) {
-        headers['Referer'] = 'https://testnet.pharosnetwork.xyz/';
+      // Only include Content-Type for POST requests with a body
+      if (method === 'POST' && Object.keys(data).length > 0) {
+        headers['Content-Type'] = 'application/json';
       }
 
       const axiosConfig = {
         method,
         url,
         headers,
-        data: method === 'POST' ? data : undefined,
+        data: method === 'POST' && Object.keys(data).length > 0 ? data : undefined,
+        timeout: 10000, // 10-second timeout
       };
+
       const response = await axios(axiosConfig);
-      return response.data;
+      if (!response.data || typeof response.data !== 'object') {
+        throw new Error('Invalid API response format');
+      }
+      return response.data as ApiResponse<T>;
     } catch (error: any) {
       attempt++;
-      const statusCode: number | undefined = error.response?.status;
-      const errorMsg: string = error.response?.data?.msg || error.message;
+      const statusCode = error.response?.status || 'unknown';
+      const errorMsg = error.response?.data?.msg || error.message || 'Unknown error';
 
       console.error(
         chalk.yellow(`${getEmoji('warning')} Attempt ${attempt}/${retries} - Error in ${method} ${url}: ${statusCode} ${errorMsg}`)
       );
 
       if (attempt >= retries) {
-        throw new Error(`API Request failed after ${retries} attempts: ${errorMsg}`);
+        throw new Error(`API request failed after ${retries} attempts: ${errorMsg}`);
       }
 
-      const delay: number = Math.min(1000 * Math.pow(2, attempt), 10000);
+      const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
       console.log(chalk.yellow(`${getEmoji('hourglass')} Retrying in ${delay / 1000} seconds...`));
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
@@ -677,35 +681,50 @@ async function checkBalanceAndApproval(tokenAddress: string, amount: number, dec
   }
 }
 
-// Verify task
 async function verifyTask(walletAddress: string, authToken: string, taskId: string, txHash: string): Promise<boolean> {
-  const url = `https://api.pharosnetwork.xyz/task/verify?address=${walletAddress}&task_id=${taskId}&tx_hash=${txHash}`;
-  console.log(chalk.blue(`${getEmoji('hourglass')} Waiting 10 seconds before verifying task ${taskId} for ${walletAddress}...`));
-  await new Promise((resolve) => setTimeout(resolve, 10000));
+  // Validate inputs
+  if (!walletAddress || !ethers.utils.isAddress(walletAddress)) {
+    console.error(chalk.red(`${getEmoji('x')} Invalid wallet address: ${walletAddress}`));
+    return false;
+  }
+  if (!taskId) {
+    console.error(chalk.red(`${getEmoji('x')} Invalid task ID: ${taskId}`));
+    return false;
+  }
+  if (!txHash || !txHash.startsWith('0x')) {
+    console.error(chalk.red(`${getEmoji('x')} Invalid transaction hash: ${txHash}`));
+    return false;
+  }
 
-  for (let attempt = 0; attempt < 10; attempt++) {
+  // Ensure checksummed address
+  const checksummedAddress = ethers.utils.getAddress(walletAddress);
+  const url = `https://api.pharosnetwork.xyz/task/verify?address=${checksummedAddress}&task_id=${taskId}&tx_hash=${txHash}`;
+  
+  console.log(chalk.blue(`${getEmoji('mag')} Verifying task ${taskId} for ${checksummedAddress} with txHash: ${txHash}`));
+
+  let attempt = 0;
+  const maxAttempts = 10;
+
+  while (attempt < maxAttempts) {
     try {
-      const response: ApiResponse<{ code: number; msg?: string }> = await makeApiRequest('POST', url, authToken, {});
+      const response = await makeApiRequest('GET', url, authToken, {});
       if (response.code === 0) {
-        console.log(chalk.green(`${getEmoji('white_check_mark')} Task ${taskId} verified for ${walletAddress}: ${txHash}`));
+        console.log(chalk.green(`${getEmoji('white_check_mark')} Task verification successful for ${checksummedAddress}, TaskID: ${taskId}`));
         return true;
+      } else {
+        throw new Error(`code: ${response.code}, msg: ${response.msg}`);
       }
-      console.log(
-        chalk.yellow(
-          `${getEmoji('hourglass')} Verification attempt ${attempt + 1}/10 for ${walletAddress}, code: ${response.code}, msg: ${response.msg || 'N/A'}, retrying...`
-        )
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10000));
     } catch (error: any) {
-      console.error(chalk.red(`${getEmoji('x')} Verification attempt ${attempt + 1}/10 failed for ${walletAddress}: ${error.message}`));
-      if (attempt === 9) {
-        console.error(chalk.red(`${getEmoji('x')} Task ${taskId} verification failed for ${walletAddress} after 10 attempts`));
+      attempt++;
+      console.error(chalk.yellow(`${getEmoji('hourglass')} Verification attempt ${attempt}/${maxAttempts} for ${checksummedAddress}, code: ${error.code || 'unknown'}, msg: ${error.message}, retrying...`));
+      if (attempt >= maxAttempts) {
+        console.error(chalk.red(`${getEmoji('x')} Task verification failed for ${checksummedAddress}, TaskID: ${taskId} after ${maxAttempts} attempts`));
         return false;
       }
-      await new Promise((resolve) => setTimeout(resolve, 10000));
+      const delayTime = Math.min(1000 * Math.pow(2, attempt), 10000);
+      await new Promise((resolve) => setTimeout(resolve, delayTime));
     }
   }
-  console.error(chalk.red(`${getEmoji('x')} Task ${taskId} verification failed for ${walletAddress} after 10 attempts (no success response)`));
   return false;
 }
 
@@ -802,24 +821,25 @@ function getMulticallData(tokenIn: string, tokenOut: string, amount: number, dec
   }
 }
 
-async function swapTokens(tokenIn: string, tokenOut: string, amount: number, times: number, walletAddress: string, authToken: string): Promise<number> {
+async function swapTokens(tokenIn: string, tokenOut: string, amount: number, times: number, walletAddress: string, authToken: string): Promise<{ successCount: number, txHashes: string[] }> {
   const wallet = wallets.find((w) => w.address.toLowerCase() === walletAddress.toLowerCase());
   if (!wallet) {
     console.error(chalk.red(`${getEmoji('x')} Wallet ${walletAddress} not found`));
-    return 0;
+    return { successCount: 0, txHashes: [] };
   }
 
   if (!(await ensurePhrsBalance(walletAddress, authToken))) {
     console.error(chalk.red(`${getEmoji('x')} Skipping swaps for ${walletAddress} due to insufficient PHRS`));
-    return 0;
+    return { successCount: 0, txHashes: [] };
   }
 
   const routerContract = new ethers.Contract(ROUTER_ADDRESS, ROUTER_ABI, wallet);
   let successCount: number = 0;
+  const txHashes: string[] = [];
 
   if (!(await validateTokens(tokenIn, tokenOut))) {
     console.error(chalk.red(`${getEmoji('warning')} Token validation failed`));
-    return 0;
+    return { successCount: 0, txHashes: [] };
   }
 
   const pair = {
@@ -839,8 +859,9 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
           chalk.cyan(`${getEmoji('arrows_counterclockwise')} Swap ${i + 1}/${times} for ${walletAddress}: ${pair.from} -> ${pair.to} (${amount} ${pair.from}) (Attempt ${attempt + 1}/${maxAttempts})`)
         );
 
-        if (!(await checkBalanceAndApproval(tokenIn, amount, decimals, ROUTER_ADDRESS, walletAddress))) {
-          console.error(chalk.red(`${getEmoji('warning')} Swap ${i + 1} failed for ${walletAddress}: Insufficient balance or approval`));
+        const balanceApprovalSuccess = await checkBalanceAndApproval(tokenIn, amount, decimals, ROUTER_ADDRESS, walletAddress);
+        if (!balanceApprovalSuccess) {
+          console.error(chalk.red(`${getEmoji('warning')} Swap ${i + 1} failed for ${walletAddress}: Insufficient balance or approval after retries`));
           break;
         }
 
@@ -852,13 +873,24 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
         }
 
         const deadline: number = Math.floor(Date.now() / 1000) + 600;
+        const nonce = await provider!.getTransactionCount(walletAddress, 'pending');
+        console.log(chalk.blue(`${getEmoji('mag')} Using nonce ${nonce} for swap ${i + 1} for ${walletAddress}`));
+
         let estimatedGas;
         try {
-          await routerContract.callStatic.multicall(deadline, multicallData, { from: walletAddress });
-          estimatedGas = await routerContract.estimateGas.multicall(deadline, multicallData, { from: walletAddress });
+          await routerContract.callStatic.multicall(deadline, multicallData, { from: walletAddress, nonce });
+          estimatedGas = await routerContract.estimateGas.multicall(deadline, multicallData, { from: walletAddress, nonce });
         } catch (error: any) {
           console.error(chalk.red(`${getEmoji('x')} Gas estimation failed for swap ${i + 1} for ${walletAddress}: ${error.message}`));
-          break;
+          attempt++;
+          if (attempt >= maxAttempts) {
+            console.error(chalk.red(`${getEmoji('x')} Swap ${i + 1} failed for ${walletAddress} after ${maxAttempts} attempts`));
+            break;
+          }
+          const delayTime: number = Math.min(1000 * Math.pow(2, attempt), 10000);
+          console.log(chalk.yellow(`${getEmoji('hourglass')} Retrying in ${delayTime / 1000} seconds...`));
+          await new Promise((resolve) => setTimeout(resolve, delayTime));
+          continue;
         }
 
         const feeData = await provider!.getFeeData();
@@ -866,6 +898,7 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
           gasLimit: Math.ceil(Number(estimatedGas) * 1.5),
           maxFeePerGas: feeData.maxFeePerGas || ethers.utils.parseUnits('5', 'gwei'),
           maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.utils.parseUnits('2', 'gwei'),
+          nonce,
         });
 
         console.log(chalk.yellow(`${getEmoji('hourglass')} Swap ${i + 1} pending for ${walletAddress}: ${tx.hash}`));
@@ -878,6 +911,7 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
         console.log(chalk.green(`${getEmoji('rocket')} Swap ${i + 1} Tx for ${walletAddress}: ${receipt.transactionHash}`));
         console.log(chalk.blue(`${getEmoji('mag')} Explorer: https://testnet.pharosscan.xyz/testnet/tx/${receipt.transactionHash}`));
         successCount++;
+        txHashes.push(receipt.transactionHash); // Store transaction hash
 
         if (i < times - 1) {
           const delayTime: number = Math.floor(Math.random() * 2000) + 1000;
@@ -894,9 +928,21 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
         if (error.receipt) {
           console.log(chalk.red(`${getEmoji('x')} Receipt: ${JSON.stringify(error.receipt)}`));
         }
+        if (error.message.includes('TX_REPLAY_ATTACK') || (error.error && error.error.code === -32600 && error.error.message.includes('TX_REPLAY_ATTACK'))) {
+          console.error(chalk.yellow(`${getEmoji('warning')} Replay attack detected. Waiting for pending transactions to clear...`));
+          await new Promise((resolve) => setTimeout(resolve, 10000));
+          continue;
+        }
         if (error.code === 'SERVER_ERROR' && error.status === 500) {
-          console.error(chalk.yellow(`${getEmoji('warning')} RPC server error (500). Skipping this swap attempt for ${walletAddress}.`));
-          break;
+          console.error(chalk.yellow(`${getEmoji('warning')} RPC server error (500). Retrying...`));
+          if (attempt >= maxAttempts) {
+            console.error(chalk.red(`${getEmoji('x')} Swap ${i + 1} failed for ${walletAddress} after ${maxAttempts} attempts`));
+            break;
+          }
+          const delayTime: number = Math.min(1000 * Math.pow(2, attempt), 10000);
+          console.log(chalk.yellow(`${getEmoji('hourglass')} Retrying in ${delayTime / 1000} seconds...`));
+          await new Promise((resolve) => setTimeout(resolve, delayTime));
+          continue;
         }
         if (attempt >= maxAttempts) {
           console.error(chalk.red(`${getEmoji('x')} Swap ${i + 1} failed for ${walletAddress} after ${maxAttempts} attempts`));
@@ -909,7 +955,7 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
     }
   }
   console.log(chalk.green(`${getEmoji('chart_with_upwards_trend')} Swap Summary for ${walletAddress}: ${successCount}/${times} successful swaps`));
-  return successCount;
+  return { successCount, txHashes };
 }
 
 async function sendToFriends(amount: number, times: number, friends: string[], walletAddress: string, authToken: string): Promise<number> {
@@ -1005,34 +1051,87 @@ async function sendToFriends(amount: number, times: number, friends: string[], w
 async function runDailyTasks(featureNumber: number, params: SwapParams, wallet: WalletConfig): Promise<FaucetStatus | null> {
   console.log(chalk.blue(`${getEmoji('rocket')} Running daily tasks for Feature ${featureNumber} (Wallet: ${wallet.address})...`));
 
+  // Perform common tasks: faucet claim, sign-in, profile check
   await claimDailyFaucet(wallet.address, wallet.authToken);
-  await checkFaucetStatus(wallet.address, wallet.authToken);
-
-  if ((featureNumber === 1 || featureNumber === 2 || featureNumber === 4 || featureNumber === 5) && params.tokenIn) {
-    await claimTokenFaucet(TOKENS.USDC.address, wallet.address);
-  }
-  if (featureNumber === 5) {
-    await claimTokenFaucet(TOKENS.WPHRS.address, wallet.address);
-  }
-
+  const faucetStatus = await checkFaucetStatus(wallet.address, wallet.authToken);
   await dailySignIn(wallet.address, wallet.authToken);
   await checkSignInStatus(wallet.address, wallet.authToken);
   await getUserProfile(wallet.address, wallet.authToken);
 
-  if ((featureNumber === 1 || featureNumber === 2 || featureNumber === 4 || featureNumber === 5) && params.tokenIn && params.tokenOut && params.swapAmount && params.swapTimes) {
-    await swapTokens(params.tokenIn, params.tokenOut, params.swapAmount, params.swapTimes, wallet.address, wallet.authToken);
+  // Claim token faucets if needed
+  if (featureNumber === 1 || featureNumber === 2 || featureNumber === 4 || featureNumber === 5) {
+    if (params.tokenIn) {
+      await claimTokenFaucet(params.tokenIn, wallet.address);
+    }
+    if (featureNumber === 5) {
+      await claimTokenFaucet(TOKENS.WPHRS.address, wallet.address);
+    }
   }
 
-  if ((featureNumber === 1 || featureNumber === 4 || featureNumber === 5) && params.sendAmount && params.sendTimes && params.friends) {
-    await sendToFriends(params.sendAmount, params.sendTimes, params.friends, wallet.address, wallet.authToken);
+  // Feature-specific tasks
+  if (featureNumber === 1 || featureNumber === 2 || featureNumber === 4 || featureNumber === 5) {
+    // Perform swaps
+    if (params.tokenIn && params.tokenOut && params.swapAmount && params.swapTimes) {
+      const swapResult = await swapTokens(
+        params.tokenIn,
+        params.tokenOut,
+        params.swapAmount,
+        params.swapTimes,
+        wallet.address,
+        wallet.authToken
+      );
+      if (swapResult.successCount > 0) {
+        console.log(chalk.green(`${getEmoji('white_check_mark')} Completed ${swapResult.successCount}/${params.swapTimes} swaps for ${wallet.address}`));
+        
+        // Verify swap task for Feature 4
+        if (featureNumber === 4 && swapResult.txHashes.length > 0) {
+          console.log(chalk.cyan(`${getEmoji('hourglass')} Verifying swap task for ${wallet.address}...`));
+          const swapTxHash = swapResult.txHashes[0]; // Use the first successful swap's txHash
+          const swapVerificationResult = await verifyTask(wallet.address, wallet.authToken, '101', swapTxHash);
+          if (swapVerificationResult) {
+            console.log(chalk.green(`${getEmoji('white_check_mark')} Swap task verified successfully for ${wallet.address}`));
+          } else {
+            console.error(chalk.red(`${getEmoji('x')} Swap task verification failed for ${wallet.address}`));
+          }
+        }
+      } else {
+        console.error(chalk.red(`${getEmoji('x')} No successful swaps for ${wallet.address}`));
+      }
+    }
   }
 
-  if (featureNumber === 5 && params.addLpTimes) {
-    await addLiquidity(wallet.address, wallet.authToken, params.addLpTimes);
+  if (featureNumber === 1 || featureNumber === 4 || featureNumber === 5) {
+    // Perform sends to friends/wallets (includes send task verification)
+    if (params.sendAmount && params.sendTimes && params.friends) {
+      const sendResult = await sendToFriends(
+        params.sendAmount,
+        params.sendTimes,
+        params.friends,
+        wallet.address,
+        wallet.authToken
+      );
+      if (sendResult > 0) {
+        console.log(chalk.green(`${getEmoji('white_check_mark')} Completed ${sendResult}/${params.sendTimes} sends for ${wallet.address}`));
+      } else {
+        console.error(chalk.red(`${getEmoji('x')} No successful sends for ${wallet.address}`));
+      }
+    }
+  }
+
+  if (featureNumber === 5) {
+    // Add liquidity
+    if (params.addLpTimes) {
+      const lpResult = await addLiquidity(wallet.address, wallet.authToken, params.addLpTimes);
+      if (lpResult > 0) {
+        console.log(chalk.green(`${getEmoji('white_check_mark')} Completed ${lpResult}/${params.addLpTimes} liquidity additions for ${wallet.address}`));
+      } else {
+        console.error(chalk.red(`${getEmoji('x')} No successful liquidity additions for ${wallet.address}`));
+      }
+    }
   }
 
   console.log(chalk.green(`${getEmoji('tada')} Daily tasks for Feature ${featureNumber} completed for ${wallet.address}!`));
-  return await checkFaucetStatus(wallet.address, wallet.authToken);
+  return faucetStatus;
 }
 
 // Schedule tasks for all wallets
