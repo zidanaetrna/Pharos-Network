@@ -989,7 +989,13 @@ async function swapTokens(tokenIn: string, tokenOut: string, amount: number, tim
   return { successCount, txHashes };
 }
 
-async function sendToFriends(amount: number, times: number, friends: string[], walletAddress: string, authToken: string): Promise<{ successCount: number, txHashes: string[] }> {
+async function sendToFriends(
+  amount: number,
+  times: number,
+  friends: string[],
+  walletAddress: string,
+  authToken: string
+): Promise<{ successCount: number; txHashes: string[] }> {
   const wallet = wallets.find((w) => w.address.toLowerCase() === walletAddress.toLowerCase());
   if (!wallet) {
     console.error(chalk.red(`${getEmoji('x')} Wallet ${walletAddress} not found`));
@@ -1005,7 +1011,9 @@ async function sendToFriends(amount: number, times: number, friends: string[], w
   let successCount: number = 0;
   const txHashes: string[] = [];
 
-  let recipients: string[] = friends.length > 0 ? friends : config.wallets.map((w) => w.address).filter((addr) => addr.toLowerCase() !== walletAddress.toLowerCase());
+  let recipients: string[] = friends.length > 0
+    ? friends
+    : config.wallets.map((w) => w.address).filter((addr) => addr.toLowerCase() !== walletAddress.toLowerCase());
   if (recipients.length === 0) {
     console.error(chalk.red(`${getEmoji('x')} No valid recipients configured for ${walletAddress}`));
     return { successCount: 0, txHashes: [] };
@@ -1020,7 +1028,11 @@ async function sendToFriends(amount: number, times: number, friends: string[], w
 
     while (attempt < maxAttempts) {
       try {
-        console.log(chalk.cyan(`${getEmoji('gift')} Sending ${amount} PHRS from ${walletAddress} to ${recipient} (${i + 1}/${times}, Attempt ${attempt + 1}/${maxAttempts})...`));
+        console.log(
+          chalk.cyan(
+            `${getEmoji('gift')} Sending ${amount} PHRS from ${walletAddress} to ${recipient} (${i + 1}/${times}, Attempt ${attempt + 1}/${maxAttempts})...`
+          )
+        );
 
         const balance: ethers.BigNumber = await provider!.getBalance(walletAddress);
         if (balance.lt(amountWei)) {
@@ -1050,7 +1062,7 @@ async function sendToFriends(amount: number, times: number, friends: string[], w
 
         console.log(chalk.yellow(`${getEmoji('hourglass')} Transfer pending from ${walletAddress}: ${tx.hash}`));
         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Transaction timed out')), 60000));
-        const receipt = await Promise.race([tx.wait(), timeoutPromise]);
+        const receipt: ethers.TransactionReceipt = await Promise.race([tx.wait(), timeoutPromise]);
 
         if (receipt.status === 0) {
           throw new Error(`Transaction reverted: ${tx.hash}`);
@@ -1063,9 +1075,15 @@ async function sendToFriends(amount: number, times: number, friends: string[], w
         console.log(chalk.blue(`${getEmoji('hourglass')} Verifying transfer task (ID 103) for ${walletAddress}...`));
         const verificationSuccess = await verifyTask(walletAddress, authToken, '103', receipt.transactionHash);
         if (verificationSuccess) {
-          console.log(chalk.green(`${getEmoji('white_check_mark')} Task ID 103 verified successfully for ${walletAddress} on tx ${receipt.transactionHash}`));
+          console.log(
+            chalk.green(
+              `${getEmoji('white_check_mark')} Task ID 103 verified successfully for ${walletAddress} on tx ${receipt.transactionHash}`
+            )
+          );
         } else {
-          console.error(chalk.red(`${getEmoji('x')} Task ID 103 verification failed for ${walletAddress} on tx ${receipt.transactionHash}`));
+          console.error(
+            chalk.red(`${getEmoji('x')} Task ID 103 verification failed for ${walletAddress} on tx ${receipt.transactionHash}`)
+          );
         }
 
         successCount++;
@@ -1078,14 +1096,19 @@ async function sendToFriends(amount: number, times: number, friends: string[], w
         break;
       } catch (error: any) {
         attempt++;
-        console.error(chalk.red(`${getEmoji('x')} Send from ${walletAddress} to ${recipient} Error (Attempt ${attempt}/${maxAttempts}): ${error.message}`));
+        console.error(
+          chalk.red(`${getEmoji('x')} Send from ${walletAddress} to ${recipient} Error (Attempt ${attempt}/${maxAttempts}): ${error.message}`)
+        );
         if (error.transaction) {
           console.log(chalk.red(`${getEmoji('x')} Transaction details: ${JSON.stringify(error.transaction)}`));
         }
         if (error.receipt) {
           console.log(chalk.red(`${getEmoji('x')} Receipt: ${JSON.stringify(error.receipt)}`));
         }
-        if (error.message.includes('TX_REPLAY_ATTACK') || (error.error && error.error.code === -32600 && error.error.message.includes('TX_REPLAY_ATTACK'))) {
+        if (
+          error.message.includes('TX_REPLAY_ATTACK') ||
+          (error.error && error.error.code === -32600 && error.error.message.includes('TX_REPLAY_ATTACK'))
+        ) {
           console.error(chalk.yellow(`${getEmoji('warning')} Replay attack detected. Waiting for pending transactions to clear...`));
           await new Promise((resolve) => setTimeout(resolve, 10000));
           continue;
