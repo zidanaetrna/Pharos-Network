@@ -380,8 +380,12 @@ async function makeApiRequest<T>(method: string, url: string, authToken: string,
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
       };
 
-      // Add Referer header for /task/verify endpoint
-      if (url.includes('/task/verify')) {
+      // Add Referer header for /task/verify endpoint if not already set
+      if (url.includes('/task/verify') && !headers['Referer']) {
+        headers['Referer'] = 'https://testnet.pharosnetwork.xyz/';
+      }
+      // Add default Referer header for other Pharos API endpoints if not already set
+      else if (url.includes('api.pharosnetwork.xyz') && !headers['Referer']) {
         headers['Referer'] = 'https://testnet.pharosnetwork.xyz/';
       }
 
